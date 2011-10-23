@@ -1,0 +1,8 @@
+== README
+
+== Unfinished Code, Not Running
+
+* tested upto lower.bound, out of memory error
+* votes are truncated to reduce memory usage
+* likely problems with sparse to non-sparse matrix functions in untested portions
+
