@@ -7,21 +7,23 @@ library(Matrix)
 library(msm)
 
 # lower bound
-lower.bound <- function(betas, X, Y.stars, X.cov, Y) {
+lower.bound <- function(betas, X, Y.stars, X.cov, Y, beta.mat.prior, beta.mat.prior.half.log.det.solve) {
   ab <- t(X) %*% X %*% (betas %*% t(betas) + X.cov)
   part1 <- sum(diag(ab))/2
   part2 <- t(betas) %*% betas + sum(diag(X.cov))
   part2 <- part2 * (beta.mat.prior[1,1])
-  part2 <- part2/2 + (1/2)*log(det(solve(beta.mat.prior))) + (len(betas)/2*log(2*pi))
+  part2 <- as.numeric(part2/2 + beta.mat.prior.half.log.det.solve + (length(betas)/2*log(2*pi)))
   part3 <- t(Y.stars) %*% Y.stars
-  part4 <- len(betas)/2 + (1/2)*log(det(sigs)) + (len(betas)/2)*log(2*pi)
-  bounds <- part1 + part2 + part3/2 + part4
+  part4 <- length(betas)/2 + (1/2)*log(det(X.cov)) + (length(betas)/2)*log(2*pi)
+  bound <- as.numeric(part1 + part2 + part3/2 + part4)
   parts <- c(-part1, -part2, part3/2, part4)
 
   # return bound and parts
-  bounds_parts <- list(bounds, parts)
-  names(bounds) <- c('bounds', 'parts')
-  return(bounds)
+#   bounds.parts <- list(bounds, parts)
+#   names(bounds.parts) <- c('bounds', 'parts')
+  if (VERBOSE) { print(paste("bound: ", bound)) }
+  if (VERBOSE) { print(paste("parts: ", parts)) }
+  return(list(bound=bound, parts=parts))
 }
 
 # X is the vector of covariates
@@ -31,7 +33,8 @@ func.reg <- function(X, Y, VERBOSE=FALSE) {
   if (VERBOSE) { print("creating beta.mat.prior") }
   # create as sparse matrix
   beta.mat.prior <- .symDiagonal(ncol(X), 1/100)
-  #beta.mat.prior <- diag(1/100, ncol(X))
+  # pre-calculate as beta.mat.prior is constant
+  beta.mat.prior.half.log.det.solve <- (1/2)*log(det(solve(beta.mat.prior)))
 
   # store each updated mean vector for beta approximating distribution
   if (VERBOSE) { print("creating beta.var") }
@@ -49,21 +52,22 @@ func.reg <- function(X, Y, VERBOSE=FALSE) {
 
   # store the progress of the lower bound on the model
   bounds <- c()
+  parts <- matrix(NA, nrow=1000, ncol=4)
   converged <- 0
   j <- 0
   
   # while not converged loop
-  while (converged==0) {
+  while (converged == 0) {
     j <- j + 1
-    if (VERBOSE) { print("iteration j: "); print(j) }
+    if (VERBOSE) { print(paste("iteration j: ", j)) }
 
     # update beta parameters
     if (VERBOSE) { print("update beta parameters") }
-    beta.var[j,] <- as.matrix(solve(t(X) %*% X + beta.mat.prior) %*% t(X) %*% Y.stars)
+    beta.var.j <- solve(t(X) %*% X + beta.mat.prior) %*% t(X) %*% Y.stars
 
     # update mean of variational dist
     if (VERBOSE) { print("update mean of variational dist") }
-    mean.var <- X %*% beta.var[j,]
+    mean.var <- X %*% beta.var.j
     mean.var.neg.matrix <- as.matrix(-mean.var)
     
     # compute Y.stars update
@@ -79,22 +83,24 @@ func.reg <- function(X, Y, VERBOSE=FALSE) {
 
     # calculating lower bound
     if (VERBOSE) { print("call lower.bound") }
-    bounds.parts <- lower.bound(beta.var[j,], X, Y.stars, X.cov, Y)
-    bounds[j] <- bounds.parts$bounds
-    parts[j,] <- trial$parts
+    bounds.parts <- lower.bound(beta.var.j, X, Y.stars, X.cov, Y, beta.mat.prior, beta.mat.prior.half.log.det.solve)
+    if (VERBOSE) { print(paste("bounds.parts$bounds: ", bounds.parts$bound)) }
+    bounds[j] <- bounds.parts$bound
+    if (VERBOSE) { print(paste("bounds.parts$parts: ", bounds.parts$parts)) }
+    parts[j,] <- bounds.parts$parts
 
     if (j > 1) {
       # check convergences
       change.in.bound <- abs(bounds[j] - bounds[j - 1])
-      if (VERBOSE) { print("change.in.bound: "); print(change.in.bound) }
-      if (change.in.bound < 1e-8) {
+      if (VERBOSE) { print(paste("change.in.bound: ", change.in.bound)) }
+      if (is.nan(change.in.bound) || change.in.bound < 1e-8) {
         converged <- 1
       }
     }
   }
 
   # format data before returing
-  data <- list(bounds, beta.var[j,], X.cov)
+  data <- list(bounds, beta.var.j, X.cov)
   names(data) <- c('bounds', 'betas', 'X.cov')
   return(data)
 }
