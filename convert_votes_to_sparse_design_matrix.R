@@ -73,7 +73,7 @@ convert.votes.to.sparse.design.matrix <- function(set.of.votes, VERBOSE=FALSE) {
     print(head(beta.parameters.identified.labels))
   }
   beta.parameters.not.identified.indexes <- !(beta.parameters.labels %in% beta.parameters.identified.labels)
-  print(beta.parameters.not.identified.indexes)
+  if (VERBOSE) print(beta.parameters.not.identified.indexes)
   beta.parameters.not.identified.labels <- beta.parameters.labels[beta.parameters.not.identified.indexes]
   if (VERBOSE) {
     print("head(beta.parameters.not.identified.labels):")
