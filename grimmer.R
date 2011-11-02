@@ -6,55 +6,77 @@
 library(Matrix)
 library(msm)
 
-# lower bound
-lower.bound <- function(betas, X, X.transpose.X, Y.stars, X.cov, Y, beta.mat.prior, variance) {
-  if (VERBOSE) { print("calculate X^TX(\beta\beta^T + X.cov)") }
+compute.lower.bound <- function(betas, X, X.transpose.X, Y.stars, X.cov, Y, beta.mat.prior, verbose=FALSE) {
+  # Compute the lower bound, expectation of logp minus expectation of logq
+  #
+  # Args:
+  #   betas: vectors of preferences.
+  #   X: Matrix of vote data, 1 for item appearing on left, -1 for item on
+  #      right, otherwise 0.
+  #   X.transpose.X: Cached value of t(X) %*% X.
+  #   Y.stars: Current variational estimate.
+  #   X.cov: Vote data covariance
+  #   Y: Matrix of win data, 1 if item on left won, otherwise 0.
+  #   beta.mat.prior: Covariance for the beta parameters.
+  #   verbose: If TRUE, prints notes during function. Default is FALSE.
+  #
+  # Returns:
+  #   bound: Lower bound.
+  #   parts: Vector of lower bound parts.
+  if (verbose) { print("calculate X^TX(\beta\beta^T + X.cov)") }
   ab <- X.transpose.X %*% (betas %*% t(betas) + X.cov)
-  if (VERBOSE) { print("calculate Tr(*)") }
+  if (verbose) { print("calculate Tr(*)") }
   part1 <- sum(diag(ab))/2
-  if (VERBOSE) { print("calculate \beta^T\beta + Tr(X.cov)") }
+  if (verbose) { print("calculate \beta^T\beta + Tr(X.cov)") }
   part2 <- t(betas) %*% betas + sum(diag(X.cov))
   part2 <- part2 * (beta.mat.prior[1,1])
-  part2 <- as.numeric(part2/2 + log(det(solve(beta.mat.prior))) + (length(betas)/2*log(2*pi)))
-  if (VERBOSE) { print("calculate Y.stars^TY.stars") }
+  part2 <- as.numeric(part2/2 + (1/2)*log(det(solve(beta.mat.prior))) + (length(betas)/2*log(2*pi)))
+  if (verbose) { print("calculate Y.stars^TY.stars") }
   part3 <- t(Y.stars) %*% Y.stars
-  # part4 is +Inf, because det(X.cov)==+Inf
   X.cov.det <- det(X.cov)
-  if (VERBOSE) { print(paste("det(X.cov): ", X.cov.det)) }
+  if (verbose) { print(paste("det(X.cov): ", X.cov.det)) }
   part4 <- length(betas)/2 + (1/2)*log(X.cov.det) + (length(betas)/2)*log(2*pi)
   bound <- part1 + part2 + part3/2 + part4
   parts <- c(-part1, -part2, part3/2, part4)
 
-  # return bound and parts
-  if (VERBOSE) { print(paste("bound: ", bound)) }
-  if (VERBOSE) { print(paste("parts: ", parts)) }
+  if (verbose) { print(paste("bound: ", bound)) }
+  if (verbose) { print(paste("parts: ", parts)) }
   return(list(bound=bound, parts=parts))
 }
 
-# X is the vector of covariates
-# Y is the dependent variable
-func.reg <- function(X, Y, VERBOSE=FALSE) {
+variational.inference <- function(X, Y, variance=100, verbose=FALSE) {
+  # Use varitational inference to estimate a preference vector.
+  #
+  # Args:
+  #   X: Matrix of vote data, 1 for item appearing on left, -1 for item on
+  #      right, otherwise 0.
+  #   Y: Matrix of win data, 1 if item on left won, otherwise 0.
+  #   variance: variance of beta parameters.
+  #   verbose: If TRUE, prints notes during function. Default is FALSE.
+  # Returns:
+  #   bounds: The bounds on the last iteration after convergence.
+  #   betas: The preference vector after convergence.
+  #   X.cov: The vote data covariance.
+  if (verbose) { print("creating beta.mat.prior") }
   # covariance for the beta parameters
-  if (VERBOSE) { print("creating beta.mat.prior") }
-  # create as sparse matrix
-  variance <- 100
   beta.mat.prior <- .symDiagonal(ncol(X), 1/variance)
   # store each updated mean vector for beta approximating distribution
-  # if (VERBOSE) { print("creating beta.var") }
+  # if (verbose) { print("creating beta.var") }
   # beta.var <- matrix(NA, nrow=1000, ncol=ncol(X))
 
-  if (VERBOSE) { print("creating Y.stars") }
+  if (verbose) { print("creating Y.stars") }
   Y.stars <- rep(0, nrow(X))
-  if (VERBOSE) { print("creating X.cov") }
-  # cache t(X)===X^T
+  if (verbose) { print("creating X.cov") }
+  # cache X^T and X^T X
   X.transpose <- t(X)
   X.transpose.X <- X.transpose %*% X
   X.cov <- solve(X.transpose.X + beta.mat.prior)
   if (any(is.infinite(X.cov))) stop("X.cov has Inf value(s)")
 
-  if (VERBOSE) { print("fill Y.stars with truncated normals") }
+  if (verbose) { print("fill Y.stars with truncated normals") }
   for (j in 1:nrow(X)) {
-    Y.stars[j] <- ifelse(Y[j]==1, rtnorm(1, mean=0.5, sd=1, lower=0, upper=Inf), rtnorm(1, mean=-0.5, sd=1, lower=-Inf, upper=0))
+    Y.stars[j] <- ifelse(Y[j]==1, rtnorm(1, mean=0.5, sd=1, lower=0, upper=Inf),
+      rtnorm(1, mean=-0.5, sd=1, lower=-Inf, upper=0))
   }
 
   # store the progress of the lower bound on the model
@@ -66,56 +88,54 @@ func.reg <- function(X, Y, VERBOSE=FALSE) {
   # while not converged loop
   while (converged == 0) {
     j <- j + 1
-    if (VERBOSE) { print(paste("iteration j: ", j)) }
+    if (verbose) { print(paste("iteration j: ", j)) }
 
     # update beta parameters
-    if (VERBOSE) { print("update beta parameters") }
+    if (verbose) { print("update beta parameters") }
     beta.var.j <- as.vector(solve(X.transpose.X + beta.mat.prior) %*% X.transpose %*% Y.stars)
     if (length(beta.var.j) != ncol(X)) { stop("length(beta.var.j) != ncol(X)") }
     # update mean of variational dist
-    if (VERBOSE) { print("update mean of variational dist") }
+    if (verbose) { print("update mean of variational dist") }
     mean.var <- as.vector(X %*% beta.var.j)
     if (length(mean.var) != nrow(X)) { stop("length(mean.var) != nrow(X)") }
-    mean.var.neg.matrix <- -mean.var
+    mean.var.neg <- -mean.var
     
     # compute Y.stars update
-    if (VERBOSE) { print("denom E[Y.stars] update") }
-    denom <- pnorm(mean.var.neg.matrix)
+    if (verbose) { print("denom E[Y.stars] update") }
+    denom <- pnorm(mean.var.neg)
     if (length(denom) != nrow(X)) { stop("length(denom) != nrow(X)") }
-    if (VERBOSE) { print("numer E[Y.stars] update") }
-    numer <- dnorm(mean.var.neg.matrix)
+    if (verbose) { print("numer E[Y.stars] update") }
+    numer <- dnorm(mean.var.neg)
     if (length(numer) != nrow(X)) { stop("length(numer) != nrow(X)") }
 
     # compute E[Y.stars]
-    if (VERBOSE) { print("compute E[Y.stars] update") }
+    if (verbose) { print("compute E[Y.stars] update") }
     Y.stars[which(Y==0)] <- mean.var[Y==0] + -numer[which(Y==0)]/denom[which(Y==0)]
     Y.stars[which(Y==1)] <- mean.var[Y==1] + numer[which(Y==1)]/(1 - denom[which(Y==1)])
     if (length(Y.stars) != nrow(X)) { stop("length(Y.stars) != nrow(X)") }
 
     # calculating lower bound
-    if (VERBOSE) { print("call lower.bound") }
+    if (verbose) { print("call lower.bound") }
     if (any(is.infinite(X.cov))) stop("X.cov has Inf value(s)")
-    bounds.parts <- lower.bound(beta.var.j, X, X.transpose.X, Y.stars, X.cov, Y, beta.mat.prior, variance)
-    if (VERBOSE) { print(paste("bounds.parts$bounds: ", bounds.parts$bound)) }
+    bounds.parts <- compute.lower.bound(beta.var.j, X, X.transpose.X, Y.stars, X.cov, Y, beta.mat.prior, verbose)
+    if (verbose) { print(paste("bounds.parts$bounds: ", bounds.parts$bound)) }
     bounds[j] <- bounds.parts$bound
-    if (VERBOSE) { print(paste("bounds.parts$parts: ", bounds.parts$parts)) }
+    if (verbose) { print(paste("bounds.parts$parts: ", bounds.parts$parts)) }
     parts[j,] <- bounds.parts$parts
 
     if (j > 1) {
       # check convergences
       change.in.bound <- abs(bounds[j] - bounds[j - 1])
-      if (VERBOSE) { print(paste("change.in.bound: ", change.in.bound)) }
+      if (verbose) { print(paste("change.in.bound: ", change.in.bound)) }
+      if (is.nan(change.in.bound)) { print("WARNING: change.in.bound is nan") }
       if ((is.nan(change.in.bound) && j > 99) || change.in.bound < 1e-8) {
         converged <- 1
-        if (VERBOSE) { print(paste("converged on iteration: ", j)) }
+        if (verbose) { print(paste("converged on iteration: ", j)) }
       }
     }
   }
 
-  # format data before returing
-  data <- list(bounds, beta.var.j, X.cov)
-  names(data) <- c('bounds', 'betas', 'X.cov')
-  return(data)
+  return(list(bounds=bounds, betas=beta.var.j, X.cov=X.cov))
 }
 
 # for repeatability set rand num gen
@@ -150,8 +170,8 @@ if (GENERATE) {
     X <- votes.sparse$x.Matrix
     Y <- votes.sparse$y.vec
     
-    if (VERBOSE) { print("calling func.reg") }
-    example.run <- func.reg(X, Y, VERBOSE)
+    if (VERBOSE) { print("calling variation inference") }
+    example.run <- variational.inference(X, Y, verbose=VERBOSE)
     
     betas.ordered <- c()
     for (j in 1:length(votes.sparse$beta.parameters.labels)) {
@@ -183,8 +203,8 @@ if (GENERATE) {
     } else {
       mean.squared.errors <- c(mean.squared.errors, sum(squared.errors))      
     }
-    plot(mean.squared.errors, type="o")
   }
+  plot(mean.squared.errors, type="o")
 } else {
   # load vote data
   load('fake_votes_small.RData')
@@ -195,8 +215,8 @@ if (GENERATE) {
   
   X <- votes.sparse$x.Matrix
   Y <- votes.sparse$y.vec
-  if (VERBOSE) { print("calling func.reg") }
-  example.run <- func.reg(X, Y, VERBOSE)
+  if (VERBOSE) { print("calling variational.inference") }
+  example.run <- variational.inference(X, Y, verbose=VERBOSE)
 }
 
 
