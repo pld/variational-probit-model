@@ -118,22 +118,85 @@ func.reg <- function(X, Y, VERBOSE=FALSE) {
   return(data)
 }
 
-# load vote data
-load('fake_votes_small.RData')
+# for repeatability set rand num gen
+set.seed(1)
 
-# take subset of vote data
-#votes <- votes[1:4000,]
+# set verbose output
+VERBOSE <- FALSE
+# generate or load votes
+GENERATE <- TRUE
 
 # load sparse data formatter
 source('convert_votes_to_sparse_design_matrix.R')
-VERBOSE <- TRUE
-votes.sparse <- convert.votes.to.sparse.design.matrix(votes, VERBOSE)
 
-X <- votes.sparse$x.Matrix
-Y <- votes.sparse$y.vec
+if (GENERATE) {
+  # load vote generation code
+  source('generate_votes.R')
+  votes.per.session.vec <- c(1000)
+  num.objects <- 9
+  true.beta.mat <- t(as.matrix(runif(num.objects, -1, 1)))
+  
+  # run many trials 
+  num.iterations <- 100
+  all.betas.ordered <- matrix(NA, nrow=num.iterations, ncol=num.objects)
+  mean.squared.errors <- c()
+  for (iteration in 1:num.iterations) {
+    print(paste("begin iteration ", iteration))
+    # generate votes
+    if (VERBOSE) { print(paste('generating ', votes.per.session.vec[1], ' votes')) }
+    votes <- generate.votes(true.beta.mat, votes.per.session.vec, VERBOSE)
+    votes.sparse <- convert.votes.to.sparse.design.matrix(votes, VERBOSE)
+  
+    X <- votes.sparse$x.Matrix
+    Y <- votes.sparse$y.vec
+    
+    if (VERBOSE) { print("calling func.reg") }
+    example.run <- func.reg(X, Y, VERBOSE)
+    
+    betas.ordered <- c()
+    for (j in 1:length(votes.sparse$beta.parameters.labels)) {
+      for (i in 1:length(votes.sparse$beta.parameters.identified.labels)) {
+        if (votes.sparse$beta.parameters.labels[j] == votes.sparse$beta.parameters.identified.labels[i]) {
+          betas.ordered <- c(betas.ordered, example.run$betas[i])
+        }
+      }
+    }
+    
+    squared.errors <- (betas.ordered - as.vector(true.beta.mat))^2
+    print(paste("sum of squared errors: ", sum(squared.errors)))
+    print(votes.sparse$beta.parameters.labels)
+    print("ordered betas:")
+    print(betas.ordered)  
+    print("truth:")
+    print(as.vector(true.beta.mat))
+    print("squared errors:")
+    print(squared.errors)
+    
+    all.betas.ordered[iteration,] <- betas.ordered
+    if (iteration > 1) {
+      betas.means <- colMeans(all.betas.ordered[1:iteration,])
+      print("mean over all iterations thus far:")
+      print(betas.means)
+      squared.errors <- (betas.means - as.vector(true.beta.mat))^2
+      print(paste("sum of squared errors for means: ", sum(squared.errors)))
+      mean.squared.errors <- c(mean.squared.errors, sum(squared.errors))
+    } else {
+      mean.squared.errors <- c(mean.squared.errors, sum(squared.errors))      
+    }
+    plot(mean.squared.errors, type="o")
+  }
+} else {
+  # load vote data
+  load('fake_votes_small.RData')
 
-# call var inference
-if (VERBOSE) { print("calling func.reg") }
-example.run <- func.reg(X, Y, VERBOSE)
-print("betas:")
-print(example.run$betas)
+  # take subset of vote data
+  #votes <- votes[1:4000,]
+  votes.sparse <- convert.votes.to.sparse.design.matrix(votes, VERBOSE)
+  
+  X <- votes.sparse$x.Matrix
+  Y <- votes.sparse$y.vec
+  if (VERBOSE) { print("calling func.reg") }
+  example.run <- func.reg(X, Y, VERBOSE)
+}
+
+
