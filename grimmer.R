@@ -1,5 +1,8 @@
 #
-# based on J. Grimmer 2010
+# Copyright 2011 Peter Lubell-Doughtie and the Trustees of Princeton University.
+# Licensed under the BSD 3-Clause license, see file 
+#
+# based on J. Grimmer 2011, Political Analysis 19:32-47
 #
 
 # load Matrix library
@@ -30,7 +33,10 @@ compute.lower.bound <- function(betas, X, X.transpose.X, Y.stars, X.cov, Y, beta
   if (verbose) { print("calculate \beta^T\beta + Tr(X.cov)") }
   part2 <- t(betas) %*% betas + sum(diag(X.cov))
   part2 <- part2 * (beta.mat.prior[1,1])
-  part2 <- as.numeric(part2/2 + (1/2)*log(det(solve(beta.mat.prior))) + (length(betas)/2*log(2*pi)))
+  part2 <- as.numeric(part2/2 + (1/2)*log(det(solve(beta.mat.prior))) 
+    + (length(betas)/2)*log(2*pi))
+  if (verbose) { print("as.numeric part2:") }
+  if (verbose) { print(part2) }
   if (verbose) { print("calculate Y.stars^TY.stars") }
   part3 <- t(Y.stars) %*% Y.stars
   X.cov.det <- det(X.cov)
@@ -59,13 +65,12 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE) {
   #   X.cov: The vote data covariance.
   if (verbose) { print("creating beta.mat.prior") }
   # covariance for the beta parameters
+  # no functional difference between sparse and non-sparse diagonal matrices
   beta.mat.prior <- .symDiagonal(ncol(X), 1/variance)
   # store each updated mean vector for beta approximating distribution
   # if (verbose) { print("creating beta.var") }
   # beta.var <- matrix(NA, nrow=1000, ncol=ncol(X))
 
-  if (verbose) { print("creating Y.stars") }
-  Y.stars <- rep(0, nrow(X))
   if (verbose) { print("creating X.cov") }
   # cache X^T and X^T X
   X.transpose <- t(X)
@@ -73,26 +78,30 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE) {
   X.cov <- solve(X.transpose.X + beta.mat.prior)
   if (any(is.infinite(X.cov))) stop("X.cov has Inf value(s)")
 
+  if (verbose) { print("creating Y.stars") }
+  Y.stars <- rep(0, nrow(X))
   if (verbose) { print("fill Y.stars with truncated normals") }
   for (j in 1:nrow(X)) {
     Y.stars[j] <- ifelse(Y[j]==1, rtnorm(1, mean=0.5, sd=1, lower=0, upper=Inf),
       rtnorm(1, mean=-0.5, sd=1, lower=-Inf, upper=0))
   }
 
+  max.iterations <- 1000
   # store the progress of the lower bound on the model
   bounds <- c()
-  parts <- matrix(NA, nrow=1000, ncol=4)
+  parts <- matrix(NA, nrow=max.iterations, ncol=4)
   converged <- 0
   j <- 0
   
   # while not converged loop
-  while (converged == 0) {
+  while (converged == 0 && j < max.iterations) {
     j <- j + 1
     if (verbose) { print(paste("iteration j: ", j)) }
 
     # update beta parameters
     if (verbose) { print("update beta parameters") }
-    beta.var.j <- as.vector(solve(X.transpose.X + beta.mat.prior) %*% X.transpose %*% Y.stars)
+    beta.var.j <- as.vector(solve(X.transpose.X + beta.mat.prior) 
+      %*% X.transpose %*% Y.stars)
     if (length(beta.var.j) != ncol(X)) { stop("length(beta.var.j) != ncol(X)") }
     # update mean of variational dist
     if (verbose) { print("update mean of variational dist") }
@@ -110,18 +119,21 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE) {
 
     # compute E[Y.stars]
     if (verbose) { print("compute E[Y.stars] update") }
-    Y.stars[which(Y==0)] <- mean.var[Y==0] + -numer[which(Y==0)]/denom[which(Y==0)]
-    Y.stars[which(Y==1)] <- mean.var[Y==1] + numer[which(Y==1)]/(1 - denom[which(Y==1)])
+    Y.stars[which(Y==0)] <- mean.var[Y==0]
+      + -numer[which(Y==0)]/denom[which(Y==0)]
+    Y.stars[which(Y==1)] <- mean.var[Y==1] 
+      + numer[which(Y==1)]/(1 - denom[which(Y==1)])
     if (length(Y.stars) != nrow(X)) { stop("length(Y.stars) != nrow(X)") }
 
     # calculating lower bound
     if (verbose) { print("call lower.bound") }
     if (any(is.infinite(X.cov))) stop("X.cov has Inf value(s)")
-    bounds.parts <- compute.lower.bound(beta.var.j, X, X.transpose.X, Y.stars, X.cov, Y, beta.mat.prior, verbose)
+    bounds.parts <- compute.lower.bound(beta.var.j, X, X.transpose.X, Y.stars, 
+      X.cov, Y, beta.mat.prior, verbose)
     if (verbose) { print(paste("bounds.parts$bounds: ", bounds.parts$bound)) }
     bounds[j] <- bounds.parts$bound
     if (verbose) { print(paste("bounds.parts$parts: ", bounds.parts$parts)) }
-    parts[j,] <- bounds.parts$parts
+    parts[j, ] <- bounds.parts$parts
 
     if (j > 1) {
       # check convergences
@@ -134,6 +146,10 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE) {
       }
     }
   }
+  if (WARN && j >= max.iterations) {
+    print(paste("WARNING: exceeded max.iterations ", max.iterations))
+    print(bounds[(max.iterations - 10):max.iterations])
+  }
 
   return(list(bounds=bounds, betas=beta.var.j, X.cov=X.cov))
 }
@@ -141,6 +157,8 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE) {
 # for repeatability set rand num gen
 set.seed(1)
 
+# set warn output
+WARN <- TRUE
 # set verbose output
 VERBOSE <- FALSE
 # generate or load votes
@@ -159,9 +177,10 @@ if (GENERATE) {
   # run many trials 
   num.iterations <- 100
   all.betas.ordered <- matrix(NA, nrow=num.iterations, ncol=num.objects)
+  all.squared.errors <- c()
   mean.squared.errors <- c()
   for (iteration in 1:num.iterations) {
-    print(paste("begin iteration ", iteration))
+    print(paste("generate votes iteration ", iteration))
     # generate votes
     if (VERBOSE) { print(paste('generating ', votes.per.session.vec[1], ' votes')) }
     votes <- generate.votes(true.beta.mat, votes.per.session.vec, VERBOSE)
@@ -183,6 +202,7 @@ if (GENERATE) {
     }
     
     squared.errors <- (betas.ordered - as.vector(true.beta.mat))^2
+    all.squared.errors <- c(all.squared.errors, squared.errors)
     print(paste("sum of squared errors: ", sum(squared.errors)))
     print(votes.sparse$beta.parameters.labels)
     print("ordered betas:")
@@ -192,9 +212,9 @@ if (GENERATE) {
     print("squared errors:")
     print(squared.errors)
     
-    all.betas.ordered[iteration,] <- betas.ordered
+    all.betas.ordered[iteration, ] <- betas.ordered
     if (iteration > 1) {
-      betas.means <- colMeans(all.betas.ordered[1:iteration,])
+      betas.means <- colMeans(all.betas.ordered[1:iteration, ])
       print("mean over all iterations thus far:")
       print(betas.means)
       squared.errors <- (betas.means - as.vector(true.beta.mat))^2
@@ -210,13 +230,15 @@ if (GENERATE) {
   load('fake_votes_small.RData')
 
   # take subset of vote data
-  #votes <- votes[1:4000,]
+  votes.max <- 0
+  if (votes.max > 0) { votes <- votes[1:votes.max, ] }
   votes.sparse <- convert.votes.to.sparse.design.matrix(votes, VERBOSE)
   
   X <- votes.sparse$x.Matrix
   Y <- votes.sparse$y.vec
   if (VERBOSE) { print("calling variational.inference") }
   example.run <- variational.inference(X, Y, verbose=VERBOSE)
+  print(example.run$betas)
+  print(votes.sparse$beta.parameters.identified.labels)
 }
-
 
