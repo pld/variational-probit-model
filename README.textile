@@ -2,7 +2,7 @@ h1. README
 
 This is an implementation of the variational probit model described in Grimmer 2011, Political Analysis 19:32-47.
 
-h2. %{color:red}Unfinished Code, Poorly Tested% 
+h2. Unfinished Code
 
 h2. LICENSE
 
