@@ -21,7 +21,7 @@ compute.lower.bound <- function(betas, X, X.transpose.X, Y.stars, X.var, Y,
   #   Y.stars: Current variational estimate.
   #   X.var: Vote data variance
   #   Y: Matrix of win data, 1 if item on left won, otherwise 0.
-  #   beta.mat.prior: Covariance for the beta parameters.
+  #   beta.mat.prior: Variance for the beta parameters.
   #   verbose: If TRUE, prints notes during function. Default is FALSE.
   #   warn: Print warning output. Default is TRUE.
   #
@@ -60,7 +60,7 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
   #   X: Matrix of vote data, 1 for item appearing on left, -1 for item on
   #      right, otherwise 0.
   #   Y: Matrix of win data, 1 if item on left won, otherwise 0.
-  #   variance: variance of beta parameters.
+  #   variance: Variance of beta parameters. Default is 100.
   #   verbose: If TRUE, prints notes during function. Default is FALSE.
   #   warn: Print warning output. Default is TRUE.
   #   max.iterations: Maximum iterations before assuming convergence. Default
@@ -99,6 +99,8 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
   converged <- 0
   j <- 0
   
+  X.var.X.transpose <- X.var %*% X.transpose
+  
   # while not converged loop
   while (converged == 0 && j < max.iterations) {
     j <- j + 1
@@ -106,8 +108,7 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
 
     # update beta parameters
     if (verbose) { print("update beta parameters") }
-    beta.var[j, ] <- as.vector(solve(X.transpose.X + beta.mat.prior) 
-      %*% X.transpose %*% Y.stars)
+    beta.var[j, ] <- as.vector(X.var.X.transpose %*% Y.stars)
     if (length(beta.var[j, ]) != ncol(X)) {
       stop("length(beta.var[j, ]) != ncol(X)")
     }
@@ -127,10 +128,10 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
 
     # compute E[Y.stars]
     if (verbose) { print("compute E[Y.stars] update") }
-    Y.stars[which(Y==0)] <- mean.var[Y==0]
-      + -numer[which(Y==0)]/denom[which(Y==0)]
-    Y.stars[which(Y==1)] <- mean.var[Y==1] 
-      + numer[which(Y==1)]/(1 - denom[which(Y==1)])
+    Y.stars[which(Y==0)] <- mean.var[Y==0] +
+      -numer[which(Y==0)]/denom[which(Y==0)]
+    Y.stars[which(Y==1)] <- mean.var[Y==1] +
+      numer[which(Y==1)]/(1 - denom[which(Y==1)])
     if (length(Y.stars) != nrow(X)) { stop("length(Y.stars) != nrow(X)") }
 
     # calculating lower bound
@@ -161,7 +162,7 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
     print(bounds[(max.iterations - 10):max.iterations])
   }
 
-  return(list(bounds=bounds, betas=beta.var, X.var=X.var))
+  return(list(bounds=bounds, betas=beta.var[j, ], X.var=X.var))
 }
 
 order.betas <- function(votes.sparse, estimated.beta) {
@@ -209,7 +210,7 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
     source('generate_votes.R')
     
     # run many trials 
-    num.replications <- 50
+    num.replications <- 100
     sample.size.vec <- seq(1000, 10000, 1000)
 
     means.per.sizes <- matrix(nrow=length(sample.size.vec),
@@ -254,7 +255,7 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
             num.votes, " Replication ", replication))
         }
 
-        estimated.beta <- betas[nrow(betas), ]
+        estimated.beta <- betas
         betas.ordered <- order.betas(votes.sparse, estimated.beta)$betas.ordered
         
         squared.errors <- (betas.ordered - as.vector(true.beta.mat))^2
@@ -296,7 +297,8 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
     }
     # we expect the MSE to decrease over larger vote sizes
     plot(indices, means.per.sizes, xlab="Number of Votes",
-      ylab="Mean Sum of Squares Error", xaxt="n")
+      ylab="Mean Sum of Squares Error", xaxt="n",
+      main=paste(num.replications, " replications per size"))
     axis(1, c(1:length(sample.size.vec)), sample.size.vec)
     for (j in 1:nrow(means.per.sizes)) {
       points(j, mean(means.per.sizes[j, ]), col="red", pch=18, cex=3)
