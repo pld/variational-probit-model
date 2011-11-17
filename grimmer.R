@@ -35,8 +35,8 @@ compute.lower.bound <- function(betas, X, X.transpose.X, Y.stars, X.var, Y,
   if (verbose) { print("calculate \beta^T\beta + Tr(X.var)") }
   part2 <- t(betas) %*% betas + sum(diag(X.var))
   part2 <- part2 * (beta.mat.prior[1,1])
-  part2 <- as.numeric(part2/2 + (1/2)*log(det(solve(beta.mat.prior))) 
-    + (length(betas)/2)*log(2*pi))
+  part2 <- as.numeric(part2/2 + (1/2)*log(det(solve(beta.mat.prior))) +
+    (length(betas)/2)*log(2*pi))
   if (verbose) { print("as.numeric part2:") }
   if (verbose) { print(part2) }
   if (verbose) { print("calculate Y.stars^TY.stars") }
@@ -151,7 +151,7 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
       if (warn && is.nan(change.in.bound)) {
         print("WARNING: change.in.bound is nan")
       }
-      if ((is.nan(change.in.bound) && j > 99) || change.in.bound < 1e-8) {
+      if (is.nan(change.in.bound) || change.in.bound < 1e-8) {
         converged <- 1
         if (verbose) { print(paste("converged on iteration: ", j)) }
       }
@@ -211,7 +211,7 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
     
     # run many trials 
     num.replications <- 100
-    sample.size.vec <- seq(1000, 10000, 1000)
+    sample.size.vec <- seq(1000, 55000, 5000)
 
     means.per.sizes <- matrix(nrow=length(sample.size.vec),
       ncol=num.replications)
