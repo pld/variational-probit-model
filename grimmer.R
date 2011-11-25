@@ -7,7 +7,13 @@
 
 # load Matrix library
 library(Matrix)
+# load msm with truncated normal
 library(msm)
+# start multicore libary
+library(doMC)
+registerDoMC()
+# multicore calls run in foreach loops
+library(foreach)
 
 compute.lower.bound <- function(betas, X, X.transpose.X, Y.stars, X.var, Y,
   beta.mat.prior, verbose=FALSE, warn=TRUE) {
@@ -76,11 +82,12 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
   beta.mat.prior <- .symDiagonal(ncol(X), 1/variance)
 
   if (verbose) { print("creating X.var") }
-  # cache X^T and X^T X
+  # cache X^T, X^T X, (X^T X + \beta)^{-1}, (X^T X + \beta)^{-1} X^T
   X.transpose <- t(X)
   X.transpose.X <- X.transpose %*% X
   X.var <- solve(X.transpose.X + beta.mat.prior)
   if (any(is.infinite(X.var))) stop("X.var has Inf value(s)")
+  X.var.X.transpose <- X.var %*% X.transpose
 
   if (verbose) { print("creating Y.stars") }
   Y.stars <- rep(0, nrow(X))
@@ -97,9 +104,7 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
   bounds <- c()
   parts <- matrix(NA, nrow=max.iterations, ncol=4)
   converged <- 0
-  j <- 0
-  
-  X.var.X.transpose <- X.var %*% X.transpose
+  j <- 0 
   
   # while not converged loop
   while (converged == 0 && j < max.iterations) {
@@ -210,8 +215,8 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
     source('generate_votes.R')
     
     # run many trials 
-    num.replications <- 100
-    sample.size.vec <- seq(1000, 55000, 5000)
+    num.replications <- 1500
+    sample.size.vec <- seq(1000, 110000, 10000)
 
     means.per.sizes <- matrix(nrow=length(sample.size.vec),
       ncol=num.replications)
@@ -223,13 +228,13 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
         " votes"))
 
       num.objects <- 9
-      true.beta.mat <- t(as.matrix(runif(num.objects, -1, 1)))
+      true.beta.mat <- t(as.matrix(runif(num.objects, -2, 2)))
       
       all.betas.ordered <- matrix(NA, nrow=num.replications, ncol=num.objects)
-      all.mse <- c()
       
-      for (replication in 1:num.replications) {
-        print(paste("replication ", replication))
+      all.mse <- c()
+      all.mse <- foreach (rep = 1:num.replications, .combine = "c") %dopar% {
+        print(paste("replication ", rep))
         # generate votes
         if (verbose) {
           print(paste('generating ', num.votes, ' votes'))
@@ -252,7 +257,7 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
               as.vector(true.beta.mat))^2/ncol(betas))
           }
           plot(iter.mse, main=paste("Log MSE vs Iteration Vote Size ",
-            num.votes, " Replication ", replication))
+            num.votes, " Replication ", rep))
         }
 
         estimated.beta <- betas
@@ -271,24 +276,26 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
           print(squared.errors)
         }
         
-        all.betas.ordered[replication, ] <- betas.ordered
-        all.mse[replication] <- mse
+        all.betas.ordered[rep, ] <- betas.ordered
+#         all.mse[rep] <- mse
         if (change.betas) {
           true.beta.mat <- t(as.matrix(runif(num.objects, -1, 1)))
         }
+        mse
       }
       # end loop over replications
+      means.per.sizes[votes.size, ] <- all.mse
+      if (verbose) {
+        plot(all.mse, type="o", main=paste(num.votes, " Votes"),
+          xlab="Replication", ylab="Mean Sum of Squares Error")
+      }
       cumulative.mean.all.mse <- c()
       for (j in 1:length(all.mse)) {
         cumulative.mean.all.mse[j] <- mean(all.mse[1:j])
       }
-      plot(all.mse, type="o", main=paste(num.votes, " Votes"),
-        xlab="Replication", ylab="Mean Sum of Squares Error")
-      means.per.sizes[votes.size, ] <- all.mse
       # we expect the cumulative mean to stabilize over more replications
       plot(cumulative.mean.all.mse, type="o", main=paste(num.votes, " Votes"),
         xlab="Replication", ylab="Cumulative Mean Sum of Squares Error")
-      means.per.sizes[votes.size, ] <- all.mse
     }
     # end loop over vote sizes
     indices <- matrix(ncol=ncol(means.per.sizes), nrow=nrow(means.per.sizes))
@@ -303,6 +310,7 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
     for (j in 1:nrow(means.per.sizes)) {
       points(j, mean(means.per.sizes[j, ]), col="red", pch=18, cex=3)
     }
+    return (list(means.per.sizes=means.per.sizes))
   } else {
     # load vote data
     load('fake_votes_small.RData')
@@ -324,4 +332,4 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
 # for repeatability set rand num gen
 set.seed(1)
 # run tests
-test.variational.inference()
+test.results <- test.variational.inference()
