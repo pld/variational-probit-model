@@ -202,7 +202,8 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
   #   warn: Print warning output. Default is TRUE.
   #   verbose: If TRUE, prints notes during function. Default is FALSE.
   #   generate: Generate votes or load. Default is TRUE.
-  #   change.betas: Generate new true betas on each replication.
+  #   change.betas: Generate new true betas on each replication. If false
+  #   different replications are highly related. Default is TRUE.
   #
   # Returns:
   #   nothing
@@ -216,7 +217,7 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
     
     # run many trials 
     num.replications <- 1500
-    sample.size.vec <- seq(1000, 110000, 10000)
+    sample.size.vec <- seq(10000, 100000, 10000)
 
     means.per.sizes <- matrix(nrow=length(sample.size.vec),
       ncol=num.replications)
@@ -228,13 +229,17 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
         " votes"))
 
       num.objects <- 9
-      true.beta.mat <- t(as.matrix(runif(num.objects, -2, 2)))
+      true.beta.mat <- NA
       
       all.betas.ordered <- matrix(NA, nrow=num.replications, ncol=num.objects)
-      
-      all.mse <- c()
       all.mse <- foreach (rep = 1:num.replications, .combine = "c") %dopar% {
         print(paste("replication ", rep))
+
+        # maybe create new beta
+        if (is.na(true.beta.mat) || change.betas) {
+          true.beta.mat <- t(as.matrix(runif(num.objects, -2, 2)))
+        }
+
         # generate votes
         if (verbose) {
           print(paste('generating ', num.votes, ' votes'))
@@ -277,10 +282,6 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
         }
         
         all.betas.ordered[rep, ] <- betas.ordered
-#         all.mse[rep] <- mse
-        if (change.betas) {
-          true.beta.mat <- t(as.matrix(runif(num.objects, -1, 1)))
-        }
         mse
       }
       # end loop over replications
