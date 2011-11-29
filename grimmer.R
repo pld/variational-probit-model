@@ -14,6 +14,9 @@ library(doMC)
 registerDoMC()
 # multicore calls run in foreach loops
 library(foreach)
+# for error bar plots
+library(gplots)
+
 
 compute.lower.bound <- function(betas, X, X.transpose.X, Y.stars, X.var, Y,
   beta.mat.prior, verbose=FALSE, warn=TRUE) {
@@ -91,6 +94,7 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
 
   if (verbose) { print("creating Y.stars") }
   Y.stars <- rep(0, nrow(X))
+
   if (verbose) { print("fill Y.stars with truncated normals") }
   for (j in 1:nrow(X)) {
     Y.stars[j] <- ifelse(Y[j]==1, rtnorm(1, mean=0.5, sd=1, lower=0, upper=Inf),
@@ -146,9 +150,13 @@ variational.inference <- function(X, Y, variance=100, verbose=FALSE, warn=TRUE,
       Y.stars, X.var, Y, beta.mat.prior, verbose)
     if (verbose) { print(paste("bounds.parts$bounds: ", bounds.parts$bound)) }
     bounds[j] <- bounds.parts$bound
+    # value of variational bound should never decrease
+    if (j > 1 && bounds[j] < bounds[j - 1]) {
+      stop(paste("bound decrease from iteation ", j - 1, " to ", j))
+    }
+
     if (verbose) { print(paste("bounds.parts$parts: ", bounds.parts$parts)) }
     parts[j, ] <- bounds.parts$parts
-
     if (j > 1) {
       # check convergences
       change.in.bound <- abs(bounds[j] - bounds[j - 1])
@@ -194,6 +202,7 @@ order.betas <- function(votes.sparse, estimated.beta) {
   }
   return(list(betas.ordered=betas.ordered))
 }
+
 test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
   change.betas=TRUE) {
   # Run tests of varitational inference.
@@ -216,8 +225,8 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
     source('generate_votes.R')
     
     # run many trials 
-    num.replications <- 1500
-    sample.size.vec <- seq(10000, 100000, 10000)
+    num.replications <- 1
+    sample.size.vec <- seq(50000, 100000, 50000)
 
     means.per.sizes <- matrix(nrow=length(sample.size.vec),
       ncol=num.replications)
@@ -253,6 +262,11 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
         if (verbose) { print("calling variational inference") }
         results.var <- variational.inference(X, Y, verbose=verbose, warn=warn)
         betas <- results.var$betas
+        
+        if (verbose) {
+          plot(results.var$bounds, type="o", xlab="Iteration", ylab="ELBO",
+            main=paste(num.votes, " Votes"))
+        }
         
         if (verbose) {
           iter.mse <- c()
@@ -311,6 +325,12 @@ test.variational.inference <- function(warn=TRUE, verbose=FALSE, generate=TRUE,
     for (j in 1:nrow(means.per.sizes)) {
       points(j, mean(means.per.sizes[j, ]), col="red", pch=18, cex=3)
     }
+    # error bars at +- variance of the means per size 
+    plotCI(x=colMeans(t(means.per.sizes)), type="o",
+      uiw=apply(t(means.per.sizes), 2, var), xaxt="n", xlab="Number of Votes",
+      ylab="Mean MSE", main="Mean MSE over all replications vs Number of Votes"
+    )
+    axis(1, c(1:length(sample.size.vec)), sample.size.vec)
     return (list(means.per.sizes=means.per.sizes))
   } else {
     # load vote data
